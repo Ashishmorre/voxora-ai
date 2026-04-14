@@ -4,6 +4,7 @@ import { supabase } from '@/lib/supabase'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { PlusCircle, Send, LogOut, MessageSquare, Trash2, Menu, X, Paperclip, Copy, Check } from 'lucide-react'
+import FileDownloadBar from '@/components/FileDownloadBar'
 
 export default function Chat() {
   const [user, setUser] = useState(null)
@@ -33,7 +34,6 @@ export default function Chat() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  // Close sidebar on mobile when clicking outside
   useEffect(() => {
     const handleClick = (e) => {
       if (sidebarOpen && window.innerWidth < 768) {
@@ -282,7 +282,7 @@ export default function Chat() {
                   {msg.role === 'assistant' && (
                     <div className="w-7 h-7 md:w-8 md:h-8 bg-blue-600 rounded-lg flex items-center justify-center text-xs font-bold flex-shrink-0 mt-1">V</div>
                   )}
-                  <div className={`group relative max-w-[85%] md:max-w-[80%] ${msg.role === 'user' ? '' : ''}`}>
+                  <div className={`group relative max-w-[85%] md:max-w-[80%]`}>
                     <div className={`rounded-2xl px-3 py-2.5 md:px-4 md:py-3 text-sm md:text-base ${
                       msg.role === 'user' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-100'
                     }`}>
@@ -310,11 +310,16 @@ export default function Chat() {
                         <p className="whitespace-pre-wrap leading-relaxed">{msg.content}</p>
                       )}
                     </div>
+
+                    {/* Copy + Download buttons for assistant messages */}
                     {msg.role === 'assistant' && msg.content && msg.content !== '...' && (
-                      <button onClick={() => copyToClipboard(msg.content, msg.id)}
-                        className="mt-1 ml-1 flex items-center gap-1 text-xs text-gray-500 hover:text-gray-300 transition-colors px-2 py-1 rounded hover:bg-gray-800">
-                        {copiedId === msg.id ? <><Check size={11} /> Copied</> : <><Copy size={11} /> Copy</>}
-                      </button>
+                      <div>
+                        <button onClick={() => copyToClipboard(msg.content, msg.id)}
+                          className="mt-1 ml-1 flex items-center gap-1 text-xs text-gray-500 hover:text-gray-300 transition-colors px-2 py-1 rounded hover:bg-gray-800">
+                          {copiedId === msg.id ? <><Check size={11} /> Copied</> : <><Copy size={11} /> Copy</>}
+                        </button>
+                        <FileDownloadBar content={msg.content} />
+                      </div>
                     )}
                   </div>
                   {msg.role === 'user' && (
