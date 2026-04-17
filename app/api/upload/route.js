@@ -15,18 +15,8 @@ export async function POST(request) {
     const mimeType = file.type
     const fileName = file.name
 
-    let extractedText = ''
-
-    if (mimeType === 'text/plain' || fileName.endsWith('.txt')) {
-      extractedText = buffer.toString('utf-8')
-    } else if (mimeType === 'text/csv' || fileName.endsWith('.csv')) {
-      extractedText = buffer.toString('utf-8')
-    } else if (mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || fileName.endsWith('.docx')) {
-      const result = await mammoth.extractRawText({ buffer })
-      extractedText = result.value
-    } else if (mimeType === 'application/pdf' || fileName.endsWith('.pdf')) {
-      extractedText = `[PDF file: ${fileName}]\n\nNote: PDF content extraction is limited. The file has been received but text extraction may be incomplete.`
-    } else if (mimeType.startsWith('image/')) {
+    // Images — send as base64 for Gemini vision
+    if (mimeType.startsWith('image/')) {
       const base64 = buffer.toString('base64')
       return NextResponse.json({
         type: 'image',
@@ -35,15 +25,58 @@ export async function POST(request) {
         fileName,
         text: `[Image uploaded: ${fileName}]`
       })
-    } else {
-      extractedText = buffer.toString('utf-8')
     }
 
+    // PDF — send as base64 for Gemini document understanding
+    if (mimeType === 'application/pdf' || fileName.endsWith('.pdf')) {
+      const base64 = buffer.toString('base64')
+      return NextResponse.json({
+        type: 'pdf',
+        base64,
+        mimeType: 'application/pdf',
+        fileName,
+        text: `[PDF uploaded: ${fileName}]`
+      })
+    }
+
+    // Plain text
+    if (mimeType === 'text/plain' || fileName.endsWith('.txt')) {
+      return NextResponse.json({
+        type: 'text',
+        text: `\n\n[File: ${fileName}]\n${buffer.toString('utf-8')}\n[End of file]`,
+        fileName
+      })
+    }
+
+    // CSV
+    if (mimeType === 'text/csv' || fileName.endsWith('.csv')) {
+      return NextResponse.json({
+        type: 'text',
+        text: `\n\n[CSV File: ${fileName}]\n${buffer.toString('utf-8')}\n[End of file]`,
+        fileName
+      })
+    }
+
+    // Word documents
+    if (
+      mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+      fileName.endsWith('.docx')
+    ) {
+      const result = await mammoth.extractRawText({ buffer })
+      return NextResponse.json({
+        type: 'text',
+        text: `\n\n[Word Document: ${fileName}]\n${result.value}\n[End of file]`,
+        fileName
+      })
+    }
+
+    // Fallback
     return NextResponse.json({
       type: 'text',
-      text: `\n\n[File: ${fileName}]\n${extractedText}\n[End of file]`,
+      text: `\n\n[File: ${fileName}]\n${buffer.toString('utf-8')}\n[End of file]`,
       fileName
     })
+
   } catch (error) {
     return NextResponse.json({ error: error.message }, { status: 500 })
   }

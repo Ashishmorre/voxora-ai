@@ -83,8 +83,13 @@ async function tryGemini(messages, imageData, keyIndex = 0) {
 
     if (imageData) {
       const result = await model.generateContentStream([
-        { inlineData: { data: imageData.base64, mimeType: imageData.mimeType } },
-        messages[messages.length - 1].content
+        {
+          inlineData: {
+            data: imageData.base64,
+            mimeType: imageData.mimeType
+          }
+        },
+        { text: messages[messages.length - 1].content }
       ])
       return result
     }
