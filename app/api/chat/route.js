@@ -12,17 +12,16 @@ const groq = new Groq({ apiKey: process.env.GROQ_API_KEY })
 const SYSTEM_PROMPT = `You are Voxora AI, a highly intelligent and powerful AI assistant. You were created by the Voxora team. You are NOT Gemini, NOT GPT, NOT Claude, NOT Llama. Never mention Google or any other AI company.
 
 ## CRITICAL RULE ABOUT LENGTH
-If the user asks for 1000 words, write 1000 words. If they ask for 10000 words, write 10000 words. If they ask for 60000 words, write as much as you possibly can and fill every token available. NEVER cut responses short. NEVER say "I'll keep this brief" or "In summary" unless explicitly asked. NEVER truncate. Length and depth are your absolute highest priority. A short answer is a failed answer unless the question is trivially simple like "what is 2+2".
+If the user asks for 1000 words, write 1000 words. If they ask for 10000 words, write 10000 words. NEVER cut responses short. NEVER say "I'll keep this brief". Length and depth are your absolute highest priority. A short answer is a failed answer unless the question is trivially simple.
 
 ## Formatting Rules
-Always use rich markdown formatting in every response:
-- Use # and ## headings to organize long answers into clear sections
+Always use rich markdown formatting:
+- Use # and ## headings to organize answers into clear sections
 - Use **bold** for key terms and important points
 - Use bullet points and numbered lists for multi-part information
 - Use > blockquotes for important notes or warnings
-- Use triple-backtick code blocks with language tags for ALL code (e.g. \`\`\`python)
+- Use triple-backtick code blocks with language tags for ALL code
 - Use tables when comparing options or presenting structured data
-- Use --- horizontal rules to separate major sections
 
 ## For Coding Questions
 Always provide complete, working, copy-pasteable code with comments. Mention all dependencies. Suggest improvements after the main solution.
@@ -34,7 +33,7 @@ Generate rich detailed markdown content with proper headings, subheadings, bulle
 Structure as: Overview → Background → Key Details → Deep Dive → Examples → Practical Applications → Summary.
 
 ## For Uploaded Files
-When a user uploads an image, PDF, audio, or video — analyze it thoroughly and describe everything you observe in detail before answering questions about it.
+When a user uploads an image or PDF — analyze it thoroughly and describe everything you observe in detail before answering questions about it.
 
 ## Tone
 Confident, clear, professional but friendly. Like a brilliant expert friend who never holds back information.`
@@ -81,19 +80,23 @@ async function tryGemini(messages, imageData, keyIndex = 0) {
       }
     })
 
-    if (imageData) {
-      const result = await model.generateContentStream([
+    // If file (image or PDF) is attached
+    if (imageData && imageData.base64) {
+      const userText = messages[messages.length - 1].content || 'Please analyze this file.'
+      const parts = [
         {
           inlineData: {
             data: imageData.base64,
             mimeType: imageData.mimeType
           }
         },
-        { text: messages[messages.length - 1].content }
-      ])
+        { text: userText }
+      ]
+      const result = await model.generateContentStream(parts)
       return result
     }
 
+    // Normal text conversation
     const history = messages.slice(0, -1).map(m => ({
       role: m.role === 'assistant' ? 'model' : 'user',
       parts: [{ text: m.content }]
@@ -104,6 +107,7 @@ async function tryGemini(messages, imageData, keyIndex = 0) {
     const result = await chat.sendMessageStream(lastMessage)
     return result
   } catch (err) {
+    console.error('Gemini error:', err)
     if (err.status === 429 || err.status === 503) {
       return tryGemini(messages, imageData, keyIndex + 1)
     }
@@ -112,74 +116,81 @@ async function tryGemini(messages, imageData, keyIndex = 0) {
 }
 
 export async function POST(request) {
-  const { messages, fileContext, imageData } = await request.json()
+  try {
+    const { messages, fileContext, imageData } = await request.json()
 
-  const lastUserMessage = messages[messages.length - 1]?.content || ''
+    const lastUserMessage = messages[messages.length - 1]?.content || ''
 
-  let extraContext = ''
-  if (fileContext) extraContext += fileContext
-  if (needsWebSearch(lastUserMessage)) {
-    const searchResults = await doWebSearch(lastUserMessage)
-    if (searchResults) extraContext += '\n\n' + searchResults
-  }
+    let extraContext = ''
+    if (fileContext && !imageData) extraContext += fileContext
+    if (needsWebSearch(lastUserMessage)) {
+      const searchResults = await doWebSearch(lastUserMessage)
+      if (searchResults) extraContext += '\n\n' + searchResults
+    }
 
-  const processedMessages = extraContext
-    ? messages.map((m, i) =>
-        i === messages.length - 1
-          ? { ...m, content: m.content + '\n\n' + extraContext }
-          : m
-      )
-    : messages
+    const processedMessages = extraContext
+      ? messages.map((m, i) =>
+          i === messages.length - 1
+            ? { ...m, content: m.content + '\n\n' + extraContext }
+            : m
+        )
+      : messages
 
-  const encoder = new TextEncoder()
+    const encoder = new TextEncoder()
 
-  const stream = new ReadableStream({
-    async start(controller) {
-      const send = (text) => {
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ text })}\n\n`))
-      }
-
-      try {
-        const geminiResult = await tryGemini(processedMessages, imageData)
-
-        if (geminiResult) {
-          for await (const chunk of geminiResult.stream) {
-            const text = chunk.text()
-            if (text) send(text)
-          }
-        } else {
-          const groqMessages = [
-            { role: 'system', content: SYSTEM_PROMPT },
-            ...processedMessages.map(m => ({
-              role: m.role === 'assistant' ? 'assistant' : 'user',
-              content: m.content
-            }))
-          ]
-          const groqStream = await groq.chat.completions.create({
-            model: 'llama-3.3-70b-versatile',
-            messages: groqMessages,
-            stream: true,
-            max_tokens: 32768,
-          })
-          for await (const chunk of groqStream) {
-            const text = chunk.choices[0]?.delta?.content || ''
-            if (text) send(text)
-          }
+    const stream = new ReadableStream({
+      async start(controller) {
+        const send = (text) => {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ text })}\n\n`))
         }
-      } catch (err) {
-        send('Sorry, I encountered an error. Please try again.')
+
+        try {
+          const geminiResult = await tryGemini(processedMessages, imageData)
+
+          if (geminiResult) {
+            for await (const chunk of geminiResult.stream) {
+              const text = chunk.text()
+              if (text) send(text)
+            }
+          } else {
+            // Fallback to Groq (text only)
+            const groqMessages = [
+              { role: 'system', content: SYSTEM_PROMPT },
+              ...processedMessages.map(m => ({
+                role: m.role === 'assistant' ? 'assistant' : 'user',
+                content: m.content
+              }))
+            ]
+            const groqStream = await groq.chat.completions.create({
+              model: 'llama-3.3-70b-versatile',
+              messages: groqMessages,
+              stream: true,
+              max_tokens: 32768,
+            })
+            for await (const chunk of groqStream) {
+              const text = chunk.choices[0]?.delta?.content || ''
+              if (text) send(text)
+            }
+          }
+        } catch (err) {
+          console.error('Stream error:', err)
+          send('Sorry, I encountered an error. Please try again.')
+        }
+
+        controller.enqueue(encoder.encode('data: [DONE]\n\n'))
+        controller.close()
       }
+    })
 
-      controller.enqueue(encoder.encode('data: [DONE]\n\n'))
-      controller.close()
-    }
-  })
-
-  return new Response(stream, {
-    headers: {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      'Connection': 'keep-alive',
-    }
-  })
+    return new Response(stream, {
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+      }
+    })
+  } catch (err) {
+    console.error('Request error:', err)
+    return new Response(JSON.stringify({ error: err.message }), { status: 500 })
+  }
 }
