@@ -15,8 +15,16 @@ export async function POST(request) {
     const mimeType = file.type
     const fileName = file.name
 
-    // Images — send as base64 for Gemini vision
+    // Images — send as base64 for Gemini vision (keep small, under 3MB)
     if (mimeType.startsWith('image/')) {
+      const sizeInMB = buffer.length / (1024 * 1024)
+      if (sizeInMB > 3) {
+        return NextResponse.json({
+          type: 'text',
+          text: `[Image uploaded: ${fileName} - Note: image was too large to analyze directly]`,
+          fileName
+        })
+      }
       const base64 = buffer.toString('base64')
       return NextResponse.json({
         type: 'image',
@@ -27,16 +35,25 @@ export async function POST(request) {
       })
     }
 
-    // PDF — send as base64 for Gemini document understanding
+    // PDF — extract text instead of sending raw base64 (avoids 413 error)
     if (mimeType === 'application/pdf' || fileName.endsWith('.pdf')) {
-      const base64 = buffer.toString('base64')
-      return NextResponse.json({
-        type: 'pdf',
-        base64,
-        mimeType: 'application/pdf',
-        fileName,
-        text: `[PDF uploaded: ${fileName}]`
-      })
+      try {
+        const pdfParse = (await import('pdf-parse')).default
+        const pdfData = await pdfParse(buffer)
+        const extractedText = pdfData.text || ''
+        const truncated = extractedText.slice(0, 50000) // max ~50k chars
+        return NextResponse.json({
+          type: 'text',
+          text: `\n\n[PDF Document: ${fileName}]\n\n${truncated}\n\n[End of PDF]`,
+          fileName
+        })
+      } catch {
+        return NextResponse.json({
+          type: 'text',
+          text: `\n\n[PDF uploaded: ${fileName} — could not extract text from this PDF]\n\n`,
+          fileName
+        })
+      }
     }
 
     // Plain text
