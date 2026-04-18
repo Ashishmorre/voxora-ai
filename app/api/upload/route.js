@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import mammoth from 'mammoth'
+import pdfParse from 'pdf-parse'
 
 export async function POST(request) {
   try {
@@ -15,13 +16,13 @@ export async function POST(request) {
     const mimeType = file.type
     const fileName = file.name
 
-    // Images — send as base64 for Gemini vision (keep small, under 3MB)
+    // Images — send as base64 for Gemini vision (under 3MB only)
     if (mimeType.startsWith('image/')) {
       const sizeInMB = buffer.length / (1024 * 1024)
       if (sizeInMB > 3) {
         return NextResponse.json({
           type: 'text',
-          text: `[Image uploaded: ${fileName} - Note: image was too large to analyze directly]`,
+          text: `[Image: ${fileName} was too large to analyze. Please use an image under 3MB.]`,
           fileName
         })
       }
@@ -35,22 +36,20 @@ export async function POST(request) {
       })
     }
 
-    // PDF — extract text instead of sending raw base64 (avoids 413 error)
+    // PDF — extract text
     if (mimeType === 'application/pdf' || fileName.endsWith('.pdf')) {
       try {
-        const pdfParse = (await import('pdf-parse')).default
         const pdfData = await pdfParse(buffer)
-        const extractedText = pdfData.text || ''
-        const truncated = extractedText.slice(0, 50000) // max ~50k chars
+        const extractedText = (pdfData.text || '').slice(0, 50000)
         return NextResponse.json({
           type: 'text',
-          text: `\n\n[PDF Document: ${fileName}]\n\n${truncated}\n\n[End of PDF]`,
+          text: `\n\n[PDF Document: ${fileName}]\n\n${extractedText}\n\n[End of PDF]`,
           fileName
         })
-      } catch {
+      } catch (pdfErr) {
         return NextResponse.json({
           type: 'text',
-          text: `\n\n[PDF uploaded: ${fileName} — could not extract text from this PDF]\n\n`,
+          text: `\n\n[PDF: ${fileName} — unable to extract text from this file]\n\n`,
           fileName
         })
       }
